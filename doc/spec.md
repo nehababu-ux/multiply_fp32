@@ -6,6 +6,7 @@
 This design currently targets:
 - **Bit-accurate results for normal FP32 numbers** (typical IEEE-754 behavior with round-to-nearest-even),
 - Deterministic latency (fixed number of cycles from `valid` to `out_valid`),
+- Optional handling for special cases(Nan,Inf,Zero)as implemented in RTL
 - The design behaves as: z = a*b 
 - z, a and b are single precision 32-bit IEEE-754 numbers
 
@@ -22,7 +23,7 @@ This design currently targets:
 | `a`     |  in | 32 | Operand A (FP32 bits) |
 | `b`     | in | 32 | Operand B (FP32 bits) |
 | `z`         | out | 32 | Result (FP32 bits) |
-| `out_valid` | out | 1 | **1-cycle pulse** when `z` is updated/valid |
+| `out_valid` | out | 1 | **1-cycle pulse** when `z` is valid |
 
 ### Handshake contract
 - When `busy==0`, a high `valid` on a rising edge **starts** an operation:
@@ -40,11 +41,11 @@ This design currently targets:
 
 ### Latency
 - Fixed latency of **7 stages**.
-- In this implementation the operation begins at stage `counter=1` and completes at `counter=7`.
-- `out_valid` asserts on the cycle where stage 7 packing finishes.
+- In this implementation the operation begins at stage `counter=1`.
+- `out_valid` asserts on the cycle at stage 7.
+- So out_valid occurs 7 clock cycles after valid is accepted.
 
-A safe expectation for system-level timing is:
-- **`out_valid` occurs 7 clock cycles after the start edge** (the clock edge where `valid` was sampled when idle).
+
 
 ### Throughput
 - **Not pipelined** (single-issue).
@@ -55,13 +56,13 @@ A safe expectation for system-level timing is:
 ## Internal Data Model (IEEE-754 binary32)
 For each operand:
 - `sign` = bit 31
-- `exp`  = bits 30:23 (biased exponent)
+- `exp`  = bits 30:23 (biased exponent,bias=127)
 - `mant` = bits 22:0 (fraction)
 
 Internal signals:
 - `a_s, b_s, z_s`: sign bits
 - `a_e, b_e, z_e`: signed exponent in *unbiased* domain (stored as 10-bit regs, used with `$signed`)
-- `a_m, b_m, z_m`: mantissas extended to 24-bit with hidden 1 when applicable
+- `a_m, b_m, z_m`: mantissas extended to 24-bit with hidden 1 for normal numbers
 - `product`: 50-bit product of mantissas
 - `guard_bit`, `round_bit`, `sticky`: rounding support bits for RNE
 
@@ -81,7 +82,7 @@ All stage actions are performed inside a single sequential always block using `c
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields).
+- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) by detecting NaN,infinity,zero.For NaN with anything return NaN(0x7FC00000),if inputs are inf and zero return NaN,if inf and finite return Inf,zero with anything return the zero with sign bit.
 - For normal operation:
   - If exponent is nonzero => sets implicit leading 1: `a_m[23] = 1`.
   - If exponent is zero (subnormal) => forces exponent to -126 (subnormal exponent baseline).
@@ -94,6 +95,7 @@ All stage actions are performed inside a single sequential always block using `c
 ### Stage 3 — Input normalization (lightweight)
 - If mantissa MSB is not set, shift left and decrement exponent.
 - This is mainly relevant for denormal handling; for strictly normal inputs, this typically does nothing.
+Note: This is a single-step normalization(not loop)
 
 ### Stage 4 — Multiply core
 - Compute result sign: `z_s = a_s ^ b_s`
@@ -126,17 +128,21 @@ This stage performs:
   - If exponent indicates exact denorm boundary -> force exponent field to 0 (denormal/zero representation).
 - Asserts `out_valid` for one cycle and clears `busy`.
 
+- Special cases include: zero if exponent=0,mantissa=0,inf if exponent=255 and mantissa=0,Nan if 0x7FC00000 
 ---
 
 ## Assumptions & Constraints
 - Inputs: `exp ∈ [1..254]` (no zeros/subnormals, no inf/nan)
+- Special cases supported as per RTL
+- subnormals handles via simplified normalization path
 
 ---
 
 ## Verification Notes
 Recommended testbench behavior for this handshake design:
-- Drive `a/b` and pulse `valid` **synchronously** on clock edges.
+- Drive `valid` **synchronously** for 1 cycle when busy == 0.
 - Wait for `out_valid` before sampling `z`.
-- Generate only normal operands,
+- Recommended inputs:normal FP32 values and edge cases such as zero,inf,NaN,max/min exponents
+- Expected latency=7 cycles
 
 ---
