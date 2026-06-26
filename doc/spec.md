@@ -6,7 +6,6 @@
 This design currently targets:
 - **Bit-accurate results for normal FP32 numbers** (typical IEEE-754 behavior with round-to-nearest-even),
 - Deterministic latency (fixed number of cycles from `valid` to `out_valid`),
-- Optional handling for special cases(Nan,Inf,Zero)as implemented in RTL
 - The design behaves as: z = a*b 
 - z, a and b are single precision 32-bit IEEE-754 numbers
 
@@ -23,7 +22,7 @@ This design currently targets:
 | `a`     |  in | 32 | Operand A (FP32 bits) |
 | `b`     | in | 32 | Operand B (FP32 bits) |
 | `z`         | out | 32 | Result (FP32 bits) |
-| `out_valid` | out | 1 | **1-cycle pulse** when `z` is valid |
+| `out_valid` | out | 1 | **1-cycle pulse** when `z` is updated/valid |
 
 ### Handshake contract
 - When `busy==0`, a high `valid` on a rising edge **starts** an operation:
@@ -41,11 +40,11 @@ This design currently targets:
 
 ### Latency
 - Fixed latency of **7 stages**.
-- In this implementation the operation begins at stage `counter=1`.
-- `out_valid` asserts on the cycle at stage 7.
-- So out_valid occurs 7 clock cycles after valid is accepted.
+- In this implementation the operation begins at stage `counter=1` and completes at `counter=7`.
+- `out_valid` asserts on the cycle where stage 7 packing finishes.
 
-
+A safe expectation for system-level timing is:
+- **`out_valid` occurs 7 clock cycles after the start edge** (the clock edge where `valid` was sampled when idle).
 
 ### Throughput
 - **Not pipelined** (single-issue).
@@ -56,13 +55,13 @@ This design currently targets:
 ## Internal Data Model (IEEE-754 binary32)
 For each operand:
 - `sign` = bit 31
-- `exp`  = bits 30:23 (biased exponent,bias=127)
+- `exp`  = bits 30:23 (biased exponent)
 - `mant` = bits 22:0 (fraction)
 
 Internal signals:
 - `a_s, b_s, z_s`: sign bits
 - `a_e, b_e, z_e`: signed exponent in *unbiased* domain (stored as 10-bit regs, used with `$signed`)
-- `a_m, b_m, z_m`: mantissas extended to 24-bit with hidden 1 for normal numbers
+- `a_m, b_m, z_m`: mantissas extended to 24-bit with hidden 1 when applicable
 - `product`: 50-bit product of mantissas
 - `guard_bit`, `round_bit`, `sticky`: rounding support bits for RNE
 
@@ -82,7 +81,8 @@ All stage actions are performed inside a single sequential always block using `c
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) by detecting NaN,infinity,zero.For NaN with anything return NaN(0x7FC00000),if inputs are inf and zero return NaN,if inf and finite return Inf,zero with anything return the zero with sign bit.
+- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields).
+- Classify each operand according to the IEEE-754 floating-point classes (Normal, Subnormal, Zero, Infinity, and NaN). If the operation involves any special operands, determine the appropriate IEEE-754 result and preserve it so that the normal arithmetic pipeline is bypassed.
 - For normal operation:
   - If exponent is nonzero => sets implicit leading 1: `a_m[23] = 1`.
   - If exponent is zero (subnormal) => forces exponent to -126 (subnormal exponent baseline).
@@ -95,7 +95,6 @@ All stage actions are performed inside a single sequential always block using `c
 ### Stage 3 — Input normalization (lightweight)
 - If mantissa MSB is not set, shift left and decrement exponent.
 - This is mainly relevant for denormal handling; for strictly normal inputs, this typically does nothing.
-Note: This is a single-step normalization(not loop)
 
 ### Stage 4 — Multiply core
 - Compute result sign: `z_s = a_s ^ b_s`
@@ -110,16 +109,7 @@ Note: This is a single-step normalization(not loop)
 - `sticky = OR(product[23:0])`
 
 ### Stage 6 — Normalize + Round-to-Nearest-Even (RNE)
-This stage performs:
-1. **Underflow alignment** toward exponent -126:
-   - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
-   - Shifts mantissa right and accumulates shifted-out bits into sticky.
-2. **Normalize** if MSB missing:
-   - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
-3. **RNE rounding**:
-   - If `G == 1` and `(R || S || LSB)` then increment mantissa.
-   - Handles carry-out from rounding:
-     - If rounding overflows mantissa, set mantissa to 0x800000 and increment exponent.
+Normalize the result mantissa and apply IEEE-754 round-to-nearest-even
 
 ### Stage 7 — Pack
 - For normal path:
@@ -128,21 +118,17 @@ This stage performs:
   - If exponent indicates exact denorm boundary -> force exponent field to 0 (denormal/zero representation).
 - Asserts `out_valid` for one cycle and clears `busy`.
 
-- Special cases include: zero if exponent=0,mantissa=0,inf if exponent=255 and mantissa=0,Nan if 0x7FC00000 
 ---
 
 ## Assumptions & Constraints
 - Inputs: `exp ∈ [1..254]` (no zeros/subnormals, no inf/nan)
-- Special cases supported as per RTL
-- subnormals handles via simplified normalization path
 
 ---
 
 ## Verification Notes
 Recommended testbench behavior for this handshake design:
-- Drive `valid` **synchronously** for 1 cycle when busy == 0.
+- Drive `a/b` and pulse `valid` **synchronously** on clock edges.
 - Wait for `out_valid` before sampling `z`.
-- Recommended inputs:normal FP32 values and edge cases such as zero,inf,NaN,max/min exponents
-- Expected latency=7 cycles
+- Generate only normal operands,
 
 ---
