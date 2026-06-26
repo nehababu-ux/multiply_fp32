@@ -82,6 +82,7 @@ All stage actions are performed inside a single sequential always block using `c
 
 ### Stage 2 — Special classification + denormal setup
 - Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields).
+- Classify each operand according to the IEEE-754 floating-point classes (Normal, Subnormal, Zero, Infinity, and NaN). If the operation involves any special operands, determine the appropriate IEEE-754 result and preserve it so that the normal arithmetic pipeline is bypassed.
 - For normal operation:
   - If exponent is nonzero => sets implicit leading 1: `a_m[23] = 1`.
   - If exponent is zero (subnormal) => forces exponent to -126 (subnormal exponent baseline).
@@ -108,7 +109,16 @@ All stage actions are performed inside a single sequential always block using `c
 - `sticky = OR(product[23:0])`
 
 ### Stage 6 — Normalize + Round-to-Nearest-Even (RNE)
-Normalize the result mantissa and apply IEEE-754 round-to-nearest-even
+This stage performs:
+1. **Underflow alignment** toward exponent -126:
+   - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
+   - Shifts mantissa right and accumulates shifted-out bits into sticky.
+2. **Normalize** if MSB missing:
+   - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
+3. **RNE rounding**:
+   - If `G == 1` and `(R || S || LSB)` then increment mantissa.
+   - Handles carry-out from rounding:
+     - If rounding overflows mantissa, set mantissa to 0x800000 and increment exponent.
 
 ### Stage 7 — Pack
 - For normal path:
