@@ -86,7 +86,7 @@ All stage actions are performed inside a single sequential always block using `c
 - If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result before normal multiplication. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
 - For normal operation:
   - If exponent is nonzero, set the implicit leading 1 in the mantissa.
-    - If exponent is zero (subnormal), treat the operand exponent as −126 while leaving the fraction unchanged for subsequent normalization.
+  - If exponent is zero (subnormal), treat the operand exponent as −126 while leaving the fraction unchanged for subsequent normalization.
 
 > If verification is restricted to normal operands only:
 > - `expA` and `expB` are always in the range 1..254.
@@ -94,7 +94,7 @@ All stage actions are performed inside a single sequential always block using `c
 > - Special-case handling is not exercised during normal-operation verification, although the implementation shall still define IEEE-754 behavior for special operands.
 
 ### Stage 3 — Input normalization (lightweight)
-- If mantissa MSB is not set, shift left and decrement exponent.
+- If the operand mantissa is nonzero and its MSB is not set, perform a single left shift and decrement the exponent by one.
 - This is mainly relevant for denormal handling; for strictly normal inputs, this typically does nothing.
 
 ### Stage 4 — Multiply core
@@ -118,9 +118,9 @@ This stage performs the following operations in sequence:
    - Clamp the exponent to −126 after alignment.
 
 2. Mantissa normalization.
-   -If the mantissa is not normalized after alignment,
+   - If the mantissa is not normalized after alignment,
 perform a single normalization step by left-shifting the mantissa by one position while decrementing the exponent by one.
-   - Any guard and round information shall be updated consistently with the mantissa shift.
+   - Any Guard, Round, and Sticky information affected by the normalization shift shall be updated before the rounding decision is evaluated.
 
 3. IEEE-754 Round-to-Nearest-Even.
    - Increment the mantissa when the Guard bit is set and `(Round || Sticky || LSB)` evaluates true.
@@ -131,14 +131,14 @@ perform a single normalization step by left-shifting the mantissa by one positio
 - Otherwise:
   - Pack the sign, biased exponent, and fraction into the IEEE-754 binary32 format.
   - If the exponent indicates overflow, output Infinity.
-  - If the exponent reaches the denormal boundary, encode the result with an exponent field of zero.
+  - If the unbiased exponent reaches the denormal boundary after normalization and rounding, encode the result with an exponent field of zero while preserving the computed fraction.
 - Assert `out_valid` for one clock cycle.
 - Clear `busy` and return the FSM to the idle state.
 
 ---
 
 ## Assumptions & Constraints
-- Inputs: `exp ∈ [1..254]` (no zeros/subnormals, no inf/nan)
+- Verification is primarily performed using normal operands (`exp ∈ [1..254]`). Although the implementation defines IEEE-754 behavior for Zero, Subnormal, Infinity, and NaN operands, these cases are outside the primary verification scope.
 
 ---
 
