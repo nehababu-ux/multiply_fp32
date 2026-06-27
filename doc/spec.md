@@ -83,6 +83,9 @@ All stage actions are performed inside a single sequential always block using `c
 ### Stage 2 — Special classification + denormal setup
 - Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields).
 - If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
+- Distinguish Zero and Subnormal operands using both the exponent and fraction fields.
+  - Zero: exponent == 0 and fraction == 0.
+  - Subnormal: exponent == 0 and fraction != 0.
 - For normal operation:
   - If exponent is nonzero => sets implicit leading 1: `a_m[23] = 1`.
   - If exponent is zero (subnormal) => forces exponent to -126 (subnormal exponent baseline).
