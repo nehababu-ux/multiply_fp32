@@ -118,7 +118,8 @@ This stage performs the following operations in sequence:
    - Clamp the exponent to −126 after alignment.
 
 2. Mantissa normalization.
-   - If the mantissa is not normalized after alignment, perform a normalization step by left-shifting the mantissa while decrementing the exponent.
+   -If the mantissa is not normalized after alignment,
+perform a single normalization step by left-shifting the mantissa by one position while decrementing the exponent by one.
    - Any guard and round information shall be updated consistently with the mantissa shift.
 
 3. IEEE-754 Round-to-Nearest-Even.
