@@ -39,12 +39,11 @@ This design currently targets:
 ## Latency and Throughput
 
 ### Latency
-- Fixed latency of **7 stages**.
-- In this implementation the operation begins at stage `counter=1` and completes at `counter=7`.
-- `out_valid` asserts on the cycle where stage 7 packing finishes.
+- The design shall have a fixed latency of exactly 7 clock cycles.
+- An operation starts on the rising clock edge where valid is sampled while busy == 0.
+- `out_valid` shall assert exactly 7 clock cycles after that start edge, and for one clock cycle only.
+- The implementation shall not insert additional wait states or pipeline stages that increase or decrease this latency.
 
-A safe expectation for system-level timing is:
-- **`out_valid` occurs 7 clock cycles after the start edge** (the clock edge where `valid` was sampled when idle).
 
 ### Throughput
 - **Not pipelined** (single-issue).
