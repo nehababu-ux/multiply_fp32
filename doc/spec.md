@@ -81,20 +81,19 @@ All stage actions are performed inside a single sequential always block using `c
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Classify each operand according to the IEEE-754 floating-point classes (Normal, Subnormal, Zero, Infinity, and NaN).
 - Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields).
-- If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result before normal multiplication. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
+- If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
 - For normal operation:
-  - If exponent is nonzero, set the implicit leading 1 in the mantissa.
-  - If exponent is zero (subnormal), treat the operand exponent as −126 while leaving the fraction unchanged for subsequent normalization.
+  - If exponent is nonzero => sets implicit leading 1: `a_m[23] = 1`.
+  - If exponent is zero (subnormal) => forces exponent to -126 (subnormal exponent baseline).
 
-> If verification is restricted to normal operands only:
-> - `expA` and `expB` are always in the range 1..254.
-> - Hidden-one insertion always occurs.
-> - Special-case handling is not exercised during normal-operation verification, although the implementation shall still define IEEE-754 behavior for special operands.
+> If you restrict inputs to **normal numbers only**, then:
+> - `expA` and `expB` are always 1..254,
+> - hidden-one insertion always happens,
+> - special logic is bypassed in practice.
 
 ### Stage 3 — Input normalization (lightweight)
-- If the operand mantissa is nonzero and its MSB is not set, perform a single left shift and decrement the exponent by one.
+- If mantissa MSB is not set, shift left and decrement exponent.
 - This is mainly relevant for denormal handling; for strictly normal inputs, this typically does nothing.
 
 ### Stage 4 — Multiply core
@@ -110,35 +109,28 @@ All stage actions are performed inside a single sequential always block using `c
 - `sticky = OR(product[23:0])`
 
 ### Stage 6 — Normalize + Round-to-Nearest-Even (RNE)
-This stage performs the following operations in sequence:
-
-1. Underflow alignment toward exponent −126.
-   - When the unbiased exponent is below −126, determine the required right-shift amount.
-   - Shift the mantissa right toward the denormal range while accumulating all shifted-out bits into the sticky bit.
-   - Clamp the exponent to −126 after alignment.
-
-2. Mantissa normalization.
-   - If the mantissa is not normalized after alignment,
-perform a single normalization step by left-shifting the mantissa by one position while decrementing the exponent by one.
-   - Any Guard, Round, and Sticky information affected by the normalization shift shall be updated before the rounding decision is evaluated.
-
-3. IEEE-754 Round-to-Nearest-Even.
-   - Increment the mantissa when the Guard bit is set and `(Round || Sticky || LSB)` evaluates true.
-   - If rounding produces a mantissa overflow, renormalize the mantissa and increment the exponent before packing.
+This stage performs:
+1. **Underflow alignment** toward exponent -126:
+   - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
+   - Shifts mantissa right and accumulates shifted-out bits into sticky.
+2. **Normalize** if MSB missing:
+   - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
+3. **RNE rounding**:
+   - If `G == 1` and `(R || S || LSB)` then increment mantissa.
+   - Handles carry-out from rounding:
+     - If rounding overflows mantissa, set mantissa to 0x800000 and increment exponent.
 
 ### Stage 7 — Pack
-- If a special IEEE-754 result was determined earlier in the pipeline, use that result directly.
-- Otherwise:
-  - Pack the sign, biased exponent, and fraction into the IEEE-754 binary32 format.
-  - If the exponent indicates overflow, output Infinity.
-  - If the unbiased exponent reaches the denormal boundary after normalization and rounding, encode the result with an exponent field of zero while preserving the computed fraction.
-- Assert `out_valid` for one clock cycle.
-- Clear `busy` and return the FSM to the idle state.
+- For normal path:
+  - Pack sign, biased exponent, fraction.
+  - If exponent indicates overflow -> output INF.
+  - If exponent indicates exact denorm boundary -> force exponent field to 0 (denormal/zero representation).
+- Asserts `out_valid` for one cycle and clears `busy`.
 
 ---
 
 ## Assumptions & Constraints
-- Verification is primarily performed using normal operands (`exp ∈ [1..254]`). Although the implementation defines IEEE-754 behavior for Zero, Subnormal, Infinity, and NaN operands, these cases are outside the primary verification scope.
+- Inputs: `exp ∈ [1..254]` (no zeros/subnormals, no inf/nan)
 
 ---
 
