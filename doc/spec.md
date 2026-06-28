@@ -80,7 +80,7 @@ All stage actions are performed inside a single sequential always block using `c
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) before evaluating the special-case path. The operand classification and the subsequent special-case decision shall be derived from these current operand fields during this stage and shall not depend on classification results retained from a previous clock cycle or previous operation.
+- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) before evaluating the special-case path.
 - If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
 - Distinguish Zero and Subnormal operands using both the exponent and fraction fields.
   - Zero: exponent == 0 and fraction == 0.
