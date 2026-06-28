@@ -43,8 +43,6 @@ This design currently targets:
 - An operation starts on the rising clock edge where valid is sampled while busy == 0.
 - `out_valid` shall assert exactly 7 clock cycles after that start edge, and for one clock cycle only.
 - The implementation shall not insert additional registered stages, wait states, or other sequential behavior that increases or decreases this latency.
-- Each pipeline stage shall complete all computations assigned to that stage within the same clock cycle in which that stage executes.
-- Stage 7 shall both compute the final packed IEEE-754 result and update `z` while asserting `out_valid` during the same clock edge. No additional cycle shall be inserted between result computation and `out_valid`.
 
 
 ### Throughput
@@ -82,7 +80,7 @@ All stage actions are performed inside a single sequential always block using `c
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) before evaluating the special-case path.
+- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) before evaluating the special-case path. The operand classification and the subsequent special-case decision shall be derived from these current operand fields during this stage and shall not depend on classification results retained from a previous clock cycle or previous operation.
 - If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
 - Distinguish Zero and Subnormal operands using both the exponent and fraction fields.
   - Zero: exponent == 0 and fraction == 0.
@@ -126,13 +124,12 @@ This stage performs:
      - If rounding overflows mantissa, set mantissa to 0x800000 and increment exponent.
 
 ### Stage 7 — Pack
-- For the normal path:
-  - Pack the sign, biased exponent, and fraction.
-  - If the exponent overflows, output IEEE-754 infinity.
-  - Encode a denormal result only when the unbiased exponent is at the denormal boundary and the significand is not normalized.
-- For the special-case path:
-  - Output the precomputed special-case result.
-- Update `z`, assert `out_valid` for exactly one clock cycle, clear `busy`, and return the FSM to the idle state during the same clock edge.
+- For normal path:
+  - Pack sign, biased exponent, fraction.
+  - If exponent indicates overflow -> output INF.
+  - A result shall be encoded as a denormal only when the unbiased exponent is at the denormal boundary and the significand is not normalized.
+- Asserts `out_valid` for one cycle and clears `busy`.
+
 ---
 
 ## Assumptions & Constraints
@@ -144,6 +141,6 @@ This stage performs:
 Recommended testbench behavior for this handshake design:
 - Drive `a/b` and pulse `valid` **synchronously** on clock edges.
 - Wait for `out_valid` before sampling `z`.
-- Generate only normal operands.
+- Generate only normal operands,
 
 ---
