@@ -42,7 +42,7 @@ This design currently targets:
 - The design shall have a fixed latency of exactly 7 clock cycles.
 - An operation starts on the rising clock edge where valid is sampled while busy == 0.
 - `out_valid` shall assert exactly 7 clock cycles after that start edge, and for one clock cycle only.
-- The implementation shall not insert additional wait states or pipeline stages that increase or decrease this latency.
+- The implementation shall not insert additional registered stages, wait states, or other sequential behavior that increases or decreases this latency.
 
 
 ### Throughput
