@@ -43,6 +43,8 @@ This design currently targets:
 - An operation starts on the rising clock edge where valid is sampled while busy == 0.
 - `out_valid` shall assert exactly 7 clock cycles after that start edge, and for one clock cycle only.
 - The implementation shall not insert additional registered stages, wait states, or other sequential behavior that increases or decreases this latency.
+- Each pipeline stage shall complete all computations assigned to that stage within the same clock cycle in which that stage executes.
+- Stage 7 shall both compute the final packed IEEE-754 result and update `z` while asserting `out_valid` during the same clock edge. No additional cycle shall be inserted between result computation and `out_valid`.
 
 
 ### Throughput
@@ -114,7 +116,8 @@ All stage actions are performed inside a single sequential always block using `c
 This stage performs:
 1. **Underflow alignment** toward exponent -126:
    - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
-   - Shifts mantissa right and accumulates shifted-out bits into sticky.
+   - Shift the mantissa toward the denormal range while updating the Guard, Round, and Sticky information to reflect all discarded bits.
+   - Clamp the exponent to −126 after alignment.
 2. **Normalize** if MSB missing:
    - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
 3. **RNE rounding**:
@@ -123,12 +126,13 @@ This stage performs:
      - If rounding overflows mantissa, set mantissa to 0x800000 and increment exponent.
 
 ### Stage 7 — Pack
-- For normal path:
-  - Pack sign, biased exponent, fraction.
-  - If exponent indicates overflow -> output INF.
-  - If exponent indicates exact denorm boundary -> force exponent field to 0 (denormal/zero representation).
-- Asserts `out_valid` for one cycle and clears `busy`.
-
+- For the normal path:
+  - Pack the sign, biased exponent, and fraction.
+  - If the exponent overflows, output IEEE-754 infinity.
+  - Encode a denormal result only when the unbiased exponent is at the denormal boundary and the significand is not normalized.
+- For the special-case path:
+  - Output the precomputed special-case result.
+- Update `z`, assert `out_valid` for exactly one clock cycle, clear `busy`, and return the FSM to the idle state during the same clock edge.
 ---
 
 ## Assumptions & Constraints
@@ -140,6 +144,6 @@ This stage performs:
 Recommended testbench behavior for this handshake design:
 - Drive `a/b` and pulse `valid` **synchronously** on clock edges.
 - Wait for `out_valid` before sampling `z`.
-- Generate only normal operands,
+- Generate only normal operands.
 
 ---
