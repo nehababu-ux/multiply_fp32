@@ -114,8 +114,7 @@ All stage actions are performed inside a single sequential always block using `c
 This stage performs:
 1. **Underflow alignment** toward exponent -126:
    - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
-   - Shift the mantissa toward the denormal range while updating the Guard, Round, and Sticky information to reflect all discarded bits.
-   - Clamp the exponent to −126 after alignment.
+   - Shifts mantissa right and accumulates shifted-out bits into sticky.
 2. **Normalize** if MSB missing:
    - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
 3. **RNE rounding**:
@@ -127,7 +126,7 @@ This stage performs:
 - For normal path:
   - Pack sign, biased exponent, fraction.
   - If exponent indicates overflow -> output INF.
-  - A result shall be encoded as a denormal only when the unbiased exponent is at the denormal boundary and the significand is not normalized.
+  - If exponent indicates exact denorm boundary -> force exponent field to 0 (denormal/zero representation).
 - Asserts `out_valid` for one cycle and clears `busy`.
 
 ---
