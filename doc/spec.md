@@ -1,7 +1,7 @@
 # fmultiplier — FP32 Multiplier (Handshake, Multi-Cycle, IEEE-754)
 
 ## Overview
-`fmultiplier` is a **multi-cycle** single-precision floating-point multiplier that accepts one operation at a time using a **valid/out_valid** handshake. Internally it runs a staged pipeline controlled by a small FSM (`counter`) and produces a 32-bit IEEE-754 binary32 result.
+`fmultiplier` is a **multi-cycle** single-precision floating-point multiplier that accepts one operation at a time using a **valid/out_valid** handshake. Internally it runs a 7 staged pipeline controlled by a small FSM (`counter`) and produces a 32-bit IEEE-754 binary32 result.
 
 This design currently targets:
 - **Bit-accurate results for normal FP32 numbers** (typical IEEE-754 behavior with round-to-nearest-even),
@@ -57,13 +57,14 @@ For each operand:
 - `exp`  = bits 30:23 (biased exponent)
 - `mant` = bits 22:0 (fraction)
 
-Internal signals:
+Internal signals(below all signals should be declared as registers):
 - `a_s, b_s, z_s`: sign bits
-- `a_e, b_e, z_e`: signed exponent in *unbiased* domain (stored as 10-bit regs, used with `$signed`)
+- `a_e, b_e, z_e`: signed exponent in *unbiased* domain (stored as 10-bit regs, use `$signed()`)
 - `a_m, b_m, z_m`: mantissas extended to 24-bit with hidden 1 when applicable
 - `product`: 50-bit product of mantissas
 - `guard_bit`, `round_bit`, `sticky`: rounding support bits for RNE
-
+- `special_case`: single bit flag which is set when special case operands(NaN,Inf,Zero)are given as input
+- `special_z`: the 32 bit product for special case operands are stored here. 
 ---
 
 ## FSM / Pipeline Stages
@@ -74,14 +75,14 @@ The FSM is controlled by:
 
 All stage actions are performed inside a single sequential always block using `case(counter)`.
 
-### Stage 1 — Unpack
+### Stage 1 — Unpack(extract the below
 - Extract mantissas into 24-bit regs (initially `{1'b0, frac}`).
-- Convert biased exponent into unbiased form: `exp - 127`.
+- Convert biased exponent into unbiased form: `exp - 10'd127`.
 - Capture signs.
 
 ### Stage 2 — Special classification + denormal setup
-- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (derived from `a_r/b_r` fields) before evaluating the special-case path.
-- If either operand belongs to a special IEEE-754 class, determine the appropriate IEEE-754 result. Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
+- Checks operand classes using `a_is_nan`, `a_is_inf`, `a_is_zero`, etc. (Declare them as wires derived from `a_r/b_r` fields) before evaluating the special-case path.
+- If either operand belongs to a special IEEE-754 class(`special_case` is set), determine the appropriate IEEE-754 result(`special_z`). Subsequent arithmetic stages shall be bypassed for that operation, and the precomputed result shall be used during the final packing stage.
 - Distinguish Zero and Subnormal operands using both the exponent and fraction fields.
   - Zero: exponent == 0 and fraction == 0.
   - Subnormal: exponent == 0 and fraction != 0.
@@ -100,8 +101,8 @@ All stage actions are performed inside a single sequential always block using `c
 
 ### Stage 4 — Multiply core
 - Compute result sign: `z_s = a_s ^ b_s`
-- Exponent add: `z_e = a_e + b_e + 1`
-- Mantissa product: `product = a_m * b_m * 4`
+- Exponent add: `z_e = a_e + b_e + 10'sd1`
+- Mantissa product: `product = a_m * b_m * 50'd4`
   - The `*4` scaling aligns the product for extraction into `{z_m, G, R, S}`.
 
 ### Stage 5 — Extract mantissa + rounding bits
@@ -113,11 +114,11 @@ All stage actions are performed inside a single sequential always block using `c
 ### Stage 6 — Normalize + Round-to-Nearest-Even (RNE)
 This stage performs:
 1. **Underflow alignment** toward exponent -126:
-   - Computes shift amount `sh = (-126 - z_e)` when `z_e < -126`.
+   - Computes shift amount `sh = (-126 -$signed(z_e))` when `z_e < -126`.
    - Shift the mantissa toward the denormal range while updating the Guard, Round, and Sticky information to reflect all discarded bits.
    - Clamp the exponent to −126 after alignment.
 2. **Normalize** if MSB missing:
-   - Left-shifts mantissa while adjusting exponent, carrying guard into LSB.
+   - Left-shifts mantissa while adjusting exponent,shifting the current guard bit into the mantissa LSB; the new guard bit takes the value of the current round bit; the round bit is then cleared to 0; sticky is unchanged.
 3. **RNE rounding**:
    - If `G == 1` and `(R || S || LSB)` then increment mantissa.
    - Handles carry-out from rounding:
@@ -127,7 +128,7 @@ This stage performs:
 - For normal path:
   - Pack sign, biased exponent, fraction.
   - If exponent indicates overflow -> output INF.
-  - A result shall be encoded as a denormal only when the unbiased exponent is at the denormal boundary and the significand is not normalized.
+  - A result shall be encoded as a denormal only when the unbiased exponent is at the denormal boundary and the significand is not normalized(i.e `z_m[23]` is zero).
 - Asserts `out_valid` for one cycle and clears `busy`.
 
 ---
@@ -140,7 +141,7 @@ This stage performs:
 ## Verification Notes
 Recommended testbench behavior for this handshake design:
 - Drive `a/b` and pulse `valid` **synchronously** on clock edges.
-- Wait for `out_valid` before sampling `z`.
-- Generate only normal operands,
+- Wait for `out_valid` before sampling `z`.After `z` is updated `out_valid` becomes high for one clock cycle at the end of stage 7.
+- Generate only normal operands(exponent field in `[1, 254]` and mantissa can be random).
 
 ---
